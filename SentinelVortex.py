@@ -641,8 +641,8 @@ All raw tool outputs are stored in: `{self.session_dir}/`
         print(f"""
 {Colors.BOLD}{Colors.HEADER}
 ╔══════════════════════════════════════════════════════════════╗
-║     AUTHORIZED WEB SECURITY ASSESSMENT FRAMEWORK             ║
-║     For Client Work & Bug Bounty Programs                    ║
+║  SentinelVortex AUTHORIZED WEB SECURITY ASSESSMENT FRAMEWORK ║
+║           For Client Work & Bug Bounty Programs              ║
 ╚══════════════════════════════════════════════════════════════╝{Colors.ENDC}
 
 {Colors.FAIL}LEGAL NOTICE:{Colors.ENDC}
@@ -680,7 +680,7 @@ Output Directory: {self.session_dir}
         print(f"""
 {Colors.BOLD}{Colors.HEADER}
 ╔══════════════════════════════════════════════════════════════╗
-║                    ASSESSMENT COMPLETE                         ║
+║                    ASSESSMENT COMPLETE                       ║
 ╚══════════════════════════════════════════════════════════════╝{Colors.ENDC}
 
 {Colors.OKCYAN}Results Directory:{Colors.ENDC} {self.session_dir}
