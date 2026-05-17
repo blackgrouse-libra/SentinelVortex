@@ -15,6 +15,8 @@ By using SentinelVortex, you agree to these terms.
 
 ---
 
+Prerequisites - Kali tools is the easiest, but you can install all manually.
+
 ## 🚀 Quick Start
 
 ```bash
