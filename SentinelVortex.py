@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
+SentinelVortex
 Authorized Web Security Assessment Framework
 For legitimate penetration testing, client engagements, and bug bounty programs.
 
 DISCLAIMER: Only use this tool on systems you own or have explicit written 
 authorization to test. Unauthorized scanning may violate laws.
 
-Author: Security Professional
+Author: BlackGrouse
 Date: 2026-05-17
 """
 
@@ -712,7 +713,7 @@ written authorization from the system owner.
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Authorized Web Security Assessment Framework",
+        description="SentinelVortex Authorized Web Security Assessment Framework",
         epilog="Example: python3 web_assessor.py -t https://example.com"
     )
     parser.add_argument('-t', '--target', required=True, help='Target URL (e.g., https://example.com)')
