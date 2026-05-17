@@ -33,7 +33,7 @@ class Colors:
     BOLD = '\033[1m'
 
 class WebSecurityAssessor:
-    def __init__(self, target, output_dir="assessment_results"):
+    def __init__(self, target, output_dir="assessment_results", verify_mode=False):
         self.target = target
         self.parsed = urlparse(target)
         self.host = self.parsed.hostname
@@ -44,6 +44,8 @@ class WebSecurityAssessor:
         self.session_dir = os.path.join(output_dir, f"{self.host}_{self.timestamp}")
         self.findings = []
         self.tool_outputs = {}
+        self.verify_mode = verify_mode
+        self.verification_findings_added = False
 
         os.makedirs(self.session_dir, exist_ok=True)
 
@@ -105,25 +107,21 @@ class WebSecurityAssessor:
         """DNS enumeration and subdomain discovery."""
         self.log("Starting DNS & Subdomain Reconnaissance", "HEADER")
 
-        # DNS enumeration with dnsenum
         self.run_command(
             f"dnsenum --enum {self.host} -o {self.session_dir}/dnsenum.xml 2>/dev/null || true",
             "dnsenum"
         )
 
-        # Subdomain discovery with sublist3r
         self.run_command(
             f"sublist3r -d {self.host} -o {self.session_dir}/subdomains.txt 2>/dev/null || true",
             "sublist3r"
         )
 
-        # TheHarvester for email/OSINT
         self.run_command(
             f"theHarvester -d {self.host} -b all -f {self.session_dir}/theharvester 2>/dev/null || true",
             "theHarvester"
         )
 
-        # Check for DNS zone transfer
         output = self.run_command(
             f"dig axfr @{self.host} {self.host} 2>/dev/null || dig axfr {self.host} 2>/dev/null || true",
             "dns_zone_transfer"
@@ -143,7 +141,6 @@ class WebSecurityAssessor:
         """Network layer reconnaissance."""
         self.log("Starting Host Discovery & Port Scanning", "HEADER")
 
-        # Resolve IP
         try:
             self.ip = socket.gethostbyname(self.host)
             self.log(f"Resolved {self.host} to {self.ip}", "SUCCESS")
@@ -151,7 +148,6 @@ class WebSecurityAssessor:
             self.ip = self.host
             self.log("Could not resolve hostname to IP", "WARNING")
 
-        # Nmap comprehensive scan
         nmap_cmd = (
             f"nmap -sS -sV -sC -O -A --script=vuln,http-enum,ssl-enum-ciphers "
             f"-p- --open -oN {self.session_dir}/nmap_full.txt "
@@ -159,7 +155,6 @@ class WebSecurityAssessor:
         )
         nmap_output = self.run_command(nmap_cmd, "nmap_full", timeout=600)
 
-        # Parse Nmap for common issues
         if "ssl-enum-ciphers" in nmap_output:
             weak_ciphers = re.findall(r'\| (TLS_RSA_WITH_3DES_EDE_CBC_SHA|SSLv[23]|RC4|DES|MD5|NULL|EXP|EXPORT)', nmap_output)
             if weak_ciphers:
@@ -172,21 +167,11 @@ class WebSecurityAssessor:
                     ["https://cheatsheetseries.owasp.org/cheatsheets/TLS_Cipher_String_Cheat_Sheet.html"]
                 )
 
-        # Check for open dangerous ports
         dangerous_ports = {
-            21: "FTP",
-            23: "Telnet", 
-            25: "SMTP (open relay risk)",
-            53: "DNS",
-            110: "POP3",
-            143: "IMAP",
-            445: "SMB",
-            3306: "MySQL",
-            3389: "RDP",
-            5432: "PostgreSQL",
-            6379: "Redis",
-            27017: "MongoDB",
-            9200: "Elasticsearch"
+            21: "FTP", 23: "Telnet", 25: "SMTP (open relay risk)", 53: "DNS",
+            110: "POP3", 143: "IMAP", 445: "SMB", 3306: "MySQL",
+            3389: "RDP", 5432: "PostgreSQL", 6379: "Redis",
+            27017: "MongoDB", 9200: "Elasticsearch"
         }
 
         for port, service in dangerous_ports.items():
@@ -206,14 +191,12 @@ class WebSecurityAssessor:
         """Web-specific vulnerability scanning."""
         self.log("Starting Web Application Vulnerability Scanning", "HEADER")
 
-        # Nikto comprehensive scan
         nikto_cmd = (
             f"nikto -h {self.target} -C all -o {self.session_dir}/nikto.txt "
             f"2>/dev/null || true"
         )
         nikto_output = self.run_command(nikto_cmd, "nikto", timeout=300)
 
-        # Parse Nikto findings
         nikto_patterns = [
             (r'(X-Frame-Options|Content-Security-Policy|X-Content-Type-Options|Strict-Transport-Security|X-XSS-Protection).*header is not present',
              "Low", "Missing Security Headers", 
@@ -252,7 +235,6 @@ class WebSecurityAssessor:
                 evidence = "; ".join(set(str(m) for m in matches[:3]))
                 self.add_finding(severity, title, description, evidence, remediation)
 
-        # SSL/TLS Analysis with sslscan
         if self.scheme == 'https':
             ssl_output = self.run_command(
                 f"sslscan --no-failed {self.host}:{self.port} 2>/dev/null || true",
@@ -279,7 +261,6 @@ class WebSecurityAssessor:
                     ["https://wiki.mozilla.org/Security/Server_Side_TLS"]
                 )
 
-        # Directory brute-forcing with Gobuster
         wordlists = [
             "/usr/share/wordlists/dirb/common.txt",
             "/usr/share/wordlists/dirbuster/directory-list-2.3-medium.txt",
@@ -294,7 +275,6 @@ class WebSecurityAssessor:
         )
         gobuster_output = self.run_command(gobuster_cmd, "gobuster", timeout=300)
 
-        # Parse Gobuster for sensitive files
         sensitive_patterns = [
             (r'/(\.env|\.git|\.svn|\.htaccess|\.htpasswd|config\.php|wp-config|database\.sql|backup|\.bak)',
              "High", "Sensitive Configuration File Exposed",
@@ -318,13 +298,11 @@ class WebSecurityAssessor:
                 evidence = "; ".join(set(str(m) for m in matches[:5]))
                 self.add_finding(severity, title, description, evidence, remediation)
 
-        # WhatWeb fingerprinting
         self.run_command(
             f"whatweb -a 3 {self.target} 2>/dev/null || true",
             "whatweb"
         )
 
-        # Wafw00f for WAF detection
         self.run_command(
             f"wafw00f {self.target} 2>/dev/null || true",
             "wafw00f"
@@ -334,7 +312,6 @@ class WebSecurityAssessor:
         """Advanced application layer testing."""
         self.log("Starting Advanced Web Application Tests", "HEADER")
 
-        # SQLMap (safe enumeration only - no exploitation)
         sqlmap_cmd = (
             f"sqlmap -u '{self.target}' --batch --level=1 --risk=1 "
             f"--banner --current-db --dbs --tables --count "
@@ -352,7 +329,6 @@ class WebSecurityAssessor:
                 ["https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html"]
             )
 
-        # XSSer for XSS detection
         xsser_cmd = (
             f"xsser -u '{self.target}' --auto --Fp -v 2>/dev/null || true"
         )
@@ -368,7 +344,6 @@ class WebSecurityAssessor:
                 ["https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html"]
             )
 
-        # WPScan if WordPress detected
         wp_output = self.run_command(
             f"wpscan --url {self.target} --enumerate ap,at,cb,dbe,u --no-update "
             f"-o {self.session_dir}/wpscan.txt 2>/dev/null || true",
@@ -387,7 +362,6 @@ class WebSecurityAssessor:
                     ["https://wordpress.org/about/security/"]
                 )
 
-        # Nuclei for template-based scanning
         nuclei_cmd = (
             f"nuclei -u {self.target} -t /usr/share/nuclei-templates/ "
             f"-severity critical,high,medium -o {self.session_dir}/nuclei.txt "
@@ -409,8 +383,6 @@ class WebSecurityAssessor:
         """Test authentication and session mechanisms."""
         self.log("Starting Authentication & Session Analysis", "HEADER")
 
-        # Test for common default credentials with Hydra (only if login form found)
-        # This is commented out by default - should only be run with explicit client consent
         self.log("Skipping brute-force tests (requires explicit client authorization)", "INFO")
         self.add_finding(
             "Info",
@@ -475,7 +447,6 @@ class WebSecurityAssessor:
             if header.lower() not in headers_lower:
                 self.add_finding(severity, title, description, f"Header not present in HTTP response", remediation)
 
-        # Check for information disclosure headers
         info_headers = ['Server', 'X-Powered-By', 'X-AspNet-Version', 'X-Generator']
         found_info = []
         for h in info_headers:
@@ -493,11 +464,246 @@ class WebSecurityAssessor:
                 ["https://owasp.org/www-project-web-security-testing-guide/latest/4-Web_Application_Security_Testing/01-Information_Gathering/08-Fingerprint_Web_Application_Framework"]
             )
 
+    # ==================== VERIFICATION PHASE ====================
+
+    def _verify_sql_injection(self, finding):
+        """Safely verify SQLi by retrieving minimal database info."""
+        self.log("Preparing SQL Injection verification...", "WARNING")
+        
+        db_confirm = input(
+            f"{Colors.FAIL}[CRITICAL] This will interact with the live database. "
+            f"Are you certain you have explicit authorization to test database access? (yes/no): {Colors.ENDC}"
+        ).lower().strip()
+        if db_confirm not in ['yes', 'y']:
+            self.log("SQL Injection verification cancelled.", "INFO")
+            return
+        
+        cmd = (
+            f"sqlmap -u '{self.target}' --batch --level=1 --risk=1 "
+            f"--banner --current-db --is-dba "
+            f"--output-dir={self.session_dir}/sqlmap_verify 2>/dev/null || true"
+        )
+        output = self.run_command(cmd, "sqlmap_verify", timeout=300)
+        
+        dbms = re.search(r'back-end DBMS is ([^\n]+)', output)
+        db_name = re.search(r'current database:[ \t]*[\'"]?([^\'"\n]+)', output)
+        is_dba = "current user is DBA" in output or "is DBA: True" in output
+        
+        if dbms or db_name:
+            evidence = "Database access verified."
+            if dbms:
+                evidence += f" DBMS: {dbms.group(1).strip()}."
+            if db_name:
+                evidence += f" Database: {db_name.group(1).strip()}."
+            if is_dba:
+                evidence += " **USER HAS DBA PRIVILEGES**"
+            
+            self.add_finding(
+                "Critical",
+                "SQL Injection VERIFIED - Database Access Gained",
+                f"Safe verification confirmed the SQL injection allows database interaction. {evidence}",
+                evidence,
+                "Immediate patching required. Remove sqlmap_verify directory after review.",
+                finding.get('references', [])
+            )
+            self.verification_findings_added = True
+            self.log("SQL Injection verified - database access confirmed!", "FAIL")
+        else:
+            self.log("Could not verify SQL injection access. Check sqlmap_verify.txt.", "WARNING")
+
+    def _verify_xss(self, finding):
+        """Verify XSS with a benign payload."""
+        self.log("Preparing XSS verification with benign payload...", "WARNING")
+        
+        payload_id = f"SV_VERIFY_{self.timestamp}"
+        benign_payload = f"<script>console.log('{payload_id}')</script>"
+        
+        cmd = (
+            f"xsser -u '{self.target}' --auto --Str --payload='{benign_payload}' "
+            f"-v 2>/dev/null || true"
+        )
+        output = self.run_command(cmd, "xsser_verify", timeout=300)
+        
+        test_url = f"{self.target}?xss_test={benign_payload}"
+        curl_cmd = f"curl -s -k --max-time 10 '{test_url}' 2>/dev/null | grep -o '{payload_id}' || true"
+        curl_output = self.run_command(curl_cmd, "xss_curl_verify", timeout=30)
+        
+        if payload_id in output or payload_id in curl_output:
+            self.add_finding(
+                "High",
+                "XSS VERIFIED - Arbitrary Script Injection Confirmed",
+                f"A benign payload was successfully injected and executed. Payload ID '{payload_id}' was detected in the response, confirming arbitrary script execution.",
+                f"Payload: {benign_payload}",
+                "Implement CSP and output encoding immediately.",
+                finding.get('references', [])
+            )
+            self.verification_findings_added = True
+            self.log("XSS verified - script injection confirmed!", "FAIL")
+        else:
+            self.log("XSS verification inconclusive. Payload was not reflected/executed.", "WARNING")
+
+    def _verify_wordpress(self, finding):
+        """Verify WordPress vulnerabilities with deeper scan."""
+        self.log("Preparing WordPress vulnerability verification...", "WARNING")
+        
+        cmd = (
+            f"wpscan --url {self.target} --enumerate vp,vt,cb,dbe "
+            f"--no-update -o {self.session_dir}/wpscan_verify.txt 2>/dev/null || true"
+        )
+        output = self.run_command(cmd, "wpscan_verify", timeout=300)
+        
+        exploits = re.findall(r'\[!\] Title: (.+?)\n', output)
+        if exploits:
+            self.add_finding(
+                "High",
+                "WordPress Vulnerabilities VERIFIED - Exploitable Components Found",
+                f"WPScan confirmed exploitable WordPress components: {', '.join(exploits[:5])}",
+                "See wpscan_verify.txt for full details.",
+                "Update all vulnerable components immediately.",
+                finding.get('references', [])
+            )
+            self.verification_findings_added = True
+            self.log("WordPress vulnerabilities verified!", "FAIL")
+
+    def _verify_default_credentials(self, finding):
+        """Test common default credentials with strict limits."""
+        self.log("Preparing default credential verification...", "WARNING")
+        
+        cred_confirm = input(
+            f"{Colors.FAIL}[CRITICAL] This will attempt logins with common default credentials. "
+            f"This may lock accounts. Proceed ONLY with explicit client authorization (yes/no): {Colors.ENDC}"
+        ).lower().strip()
+        if cred_confirm not in ['yes', 'y']:
+            return
+        
+        temp_wordlist = os.path.join(self.session_dir, "default_creds.txt")
+        with open(temp_wordlist, 'w') as f:
+            f.write("admin:admin\nadmin:password\nadmin:123456\nroot:root\nuser:user\ntest:test\nguest:guest\n")
+        
+        self.log("Testing HTTP Basic Auth with common credentials...", "INFO")
+        hydra_cmd = (
+            f"hydra -C {temp_wordlist} -f -s {self.port} "
+            f"{self.host} http-get / 2>/dev/null || true"
+        )
+        hydra_output = self.run_command(hydra_cmd, "hydra_basic_auth", timeout=120)
+        
+        if "login:" in hydra_output and "password:" in hydra_output:
+            cred_match = re.search(r'login:\s*(\S+)\s*password:\s*(\S+)', hydra_output)
+            cred_str = f"{cred_match.group(1)}:{cred_match.group(2)}" if cred_match else "found in output"
+            
+            self.add_finding(
+                "Critical",
+                "Default Credentials VERIFIED - Unauthorized Access Gained",
+                f"Default credentials worked for HTTP Basic Auth. Successful login: {cred_str}",
+                f"See hydra_basic_auth.txt for details.",
+                "Change all default passwords immediately. Implement account lockout and strong password policies.",
+                ["https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html"]
+            )
+            self.verification_findings_added = True
+            self.log("Default credentials verified - access gained!", "FAIL")
+        else:
+            self.log("No default credentials worked for Basic Auth. Form-based auth requires manual testing.", "INFO")
+        
+        if os.path.exists(temp_wordlist):
+            os.remove(temp_wordlist)
+
+    def _verify_sensitive_exposure(self, finding):
+        """Verify sensitive files are actually accessible and contain sensitive data."""
+        self.log("Verifying sensitive file exposure...", "WARNING")
+        
+        paths = re.findall(r'(/[\w\-\./]+)', finding.get('evidence', ''))
+        confirmed = []
+        
+        for path in paths[:3]:
+            url = f"{self.target}{path}"
+            cmd = f"curl -s -k --max-time 10 '{url}' 2>/dev/null | head -30 || true"
+            output = self.run_command(cmd, f"verify_{path.strip('/').replace('/', '_')}", timeout=15)
+            
+            sensitive_patterns = ['password', 'secret', 'key', 'token', 'config', 'database', 'admin', 'AWS', 'api_key']
+            if any(p in output.lower() for p in sensitive_patterns) and len(output) > 50:
+                confirmed.append(f"{path}: contains sensitive keywords")
+        
+        if confirmed:
+            self.add_finding(
+                "High",
+                "Sensitive File Exposure VERIFIED - Confidential Data Accessible",
+                f"Confirmed that exposed files contain sensitive data: {'; '.join(confirmed)}",
+                "See individual verification outputs in session directory.",
+                "Remove sensitive files immediately. Review access controls.",
+                finding.get('references', [])
+            )
+            self.verification_findings_added = True
+            self.log("Sensitive file exposure verified!", "FAIL")
+
+    def run_verification_phase(self):
+        """Interactive verification phase for critical and high findings."""
+        print(f"""
+{Colors.BOLD}{Colors.HEADER}
+╔══════════════════════════════════════════════════════════════╗
+║           VULNERABILITY VERIFICATION PHASE                   ║
+║     Confirm findings through safe proof-of-concept           ║
+╚══════════════════════════════════════════════════════════════╝{Colors.ENDC}
+
+{Colors.FAIL}EXTREME CAUTION:{Colors.ENDC}
+This phase attempts to SAFELY verify critical vulnerabilities.
+It may interact with databases, inject benign payloads, or test credentials.
+ONLY proceed if you have explicit authorization for exploitation testing.
+""")
+        
+        global_confirm = input(
+            f"{Colors.FAIL}Enable verification phase? This goes BEYOND scanning. (yes/no): {Colors.ENDC}"
+        ).lower().strip()
+        if global_confirm not in ['yes', 'y']:
+            self.log("Verification phase disabled by user.", "INFO")
+            return
+        
+        verifiable = [f for f in self.findings if f['severity'] in ['Critical', 'High']]
+        
+        if not verifiable:
+            self.log("No Critical/High findings available for verification.", "INFO")
+            return
+        
+        verified_count = 0
+        
+        for finding in verifiable:
+            print(f"\n{Colors.HEADER}{'='*60}{Colors.ENDC}")
+            self.log(f"[{finding['severity']}] {finding['title']}", "HEADER")
+            desc = finding['description'][:180]
+            print(f"{Colors.OKCYAN}Description: {desc}...{Colors.ENDC}")
+            
+            choice = input(
+                f"{Colors.WARNING}Attempt safe verification? (yes/no/skip-all): {Colors.ENDC}"
+            ).lower().strip()
+            
+            if choice == 'skip-all':
+                break
+            if choice not in ['yes', 'y']:
+                continue
+            
+            title = finding['title'].lower()
+            if 'sql injection' in title or 'sqlmap' in finding.get('evidence', '').lower():
+                self._verify_sql_injection(finding)
+            elif 'xss' in title or 'cross-site' in title:
+                self._verify_xss(finding)
+            elif 'wordpress' in title:
+                self._verify_wordpress(finding)
+            elif 'default' in title and 'credential' in title:
+                self._verify_default_credentials(finding)
+            elif 'sensitive file' in title or 'exposure' in title:
+                self._verify_sensitive_exposure(finding)
+            else:
+                self.log(f"No automated verification available for this finding type.", "INFO")
+            
+            verified_count += 1
+        
+        self.log(f"Verification phase complete. {verified_count} findings tested.", "SUCCESS")
+
+    # ==================== REPORTING ====================
+
     def generate_report(self):
         """Generate comprehensive assessment report."""
         self.log("Generating Assessment Report", "HEADER")
 
-        # Sort findings by severity
         severity_order = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3, "Info": 4}
         self.findings.sort(key=lambda x: severity_order.get(x['severity'], 5))
 
@@ -532,7 +738,8 @@ class WebSecurityAssessor:
                 "Database Injection Testing (sqlmap - enumeration only)",
                 "Cross-Site Scripting Detection (xsser)",
                 "WordPress Assessment (wpscan - if applicable)",
-                "HTTP Security Header Analysis (curl)"
+                "HTTP Security Header Analysis (curl)",
+                "Optional: Safe Vulnerability Verification (sqlmap, xsser, wpscan, hydra)"
             ],
             "remediation_priorities": [
                 "Address all Critical findings immediately",
@@ -547,40 +754,34 @@ class WebSecurityAssessor:
             )
         }
 
-        # Save JSON report
         json_path = os.path.join(self.session_dir, "report.json")
         with open(json_path, 'w') as f:
             json.dump(report, f, indent=2)
 
-        # Generate Markdown report
         md_path = os.path.join(self.session_dir, "report.md")
         with open(md_path, 'w') as f:
-            f.write(f"""# Security Assessment Report
-
-## Target Information
-- **Target:** {self.target}
-- **Host:** {self.host}
-- **IP:** {getattr(self, 'ip', 'N/A')}
-- **Date:** {self.timestamp}
-- **Assessor:** Authorized Security Professional
-
-## Executive Summary
-
-| Severity | Count |
-|----------|-------|
-| Critical | {report['executive_summary']['critical']} |
-| High | {report['executive_summary']['high']} |
-| Medium | {report['executive_summary']['medium']} |
-| Low | {report['executive_summary']['low']} |
-| Info | {report['executive_summary']['info']} |
-| **Total** | **{report['executive_summary']['total_findings']}** |
-
-## Detailed Findings
-
-""")
+            f.write("# Security Assessment Report\n\n")
+            f.write("## Target Information\n")
+            f.write(f"- **Target:** {self.target}\n")
+            f.write(f"- **Host:** {self.host}\n")
+            f.write(f"- **IP:** {getattr(self, 'ip', 'N/A')}\n")
+            f.write(f"- **Date:** {self.timestamp}\n")
+            f.write("- **Assessor:** Authorized Security Professional\n\n")
+            
+            f.write("## Executive Summary\n\n")
+            f.write("| Severity | Count |\n")
+            f.write("|----------|-------|\n")
+            f.write(f"| Critical | {report['executive_summary']['critical']} |\n")
+            f.write(f"| High | {report['executive_summary']['high']} |\n")
+            f.write(f"| Medium | {report['executive_summary']['medium']} |\n")
+            f.write(f"| Low | {report['executive_summary']['low']} |\n")
+            f.write(f"| Info | {report['executive_summary']['info']} |\n")
+            f.write(f"| **Total** | **{report['executive_summary']['total_findings']}** |\n\n")
+            
+            f.write("## Detailed Findings\n\n")
 
             for i, finding in enumerate(self.findings, 1):
-                severity_color = {
+                severity_icon = {
                     "Critical": "🔴",
                     "High": "🟠", 
                     "Medium": "🟡",
@@ -588,48 +789,31 @@ class WebSecurityAssessor:
                     "Info": "🔵"
                 }.get(finding['severity'], "⚪")
 
-                f.write(f"""### {i}. {severity_color} {finding['title']}
-
-**Severity:** {finding['severity']}
-
-**Description:**
-{finding['description']}
-
-**Evidence:**
-```
-{finding['evidence']}
-```
-
-**Remediation:**
-{finding['remediation']}
-
-""")
+                f.write(f"### {i}. {severity_icon} {finding['title']}\n\n")
+                f.write(f"**Severity:** {finding['severity']}\n\n")
+                f.write(f"**Description:**\n{finding['description']}\n\n")
+                f.write(f"**Evidence:**\n```\n{finding['evidence']}\n```\n\n")
+                f.write(f"**Remediation:**\n{finding['remediation']}\n\n")
+                
                 if finding['references']:
                     f.write("**References:**\n")
                     for ref in finding['references']:
                         f.write(f"- {ref}\n")
-                f.write("\n---\n\n")
+                    f.write("\n")
+                f.write("---\n\n")
 
-            f.write(f"""## Methodology
-
-The following tools and techniques were employed:
-
-""")
+            f.write("## Methodology\n\n")
             for step in report['methodology']:
                 f.write(f"- {step}\n")
+            f.write("\n")
 
-            f.write(f"""
-## Raw Tool Outputs
-
-All raw tool outputs are stored in: `{self.session_dir}/`
-
-## Legal Disclaimer
-
-{report['legal_disclaimer']}
-
----
-*Report generated by Authorized Web Security Assessment Framework*
-""")
+            f.write("## Raw Tool Outputs\n\n")
+            f.write(f"All raw tool outputs are stored in: `{self.session_dir}/`\n\n")
+            
+            f.write("## Legal Disclaimer\n\n")
+            f.write(f"{report['legal_disclaimer']}\n\n")
+            f.write("---\n")
+            f.write("*Report generated by Authorized Web Security Assessment Framework*\n")
 
         self.log(f"Report saved to: {md_path}", "SUCCESS")
         self.log(f"JSON data saved to: {json_path}", "SUCCESS")
@@ -641,8 +825,8 @@ All raw tool outputs are stored in: `{self.session_dir}/`
         print(f"""
 {Colors.BOLD}{Colors.HEADER}
 ╔══════════════════════════════════════════════════════════════╗
-║  SentinelVortex AUTHORIZED WEB SECURITY ASSESSMENT FRAMEWORK ║
-║           For Client Work & Bug Bounty Programs              ║
+║     AUTHORIZED WEB SECURITY ASSESSMENT FRAMEWORK             ║
+║     For Client Work & Bug Bounty Programs                    ║
 ╚══════════════════════════════════════════════════════════════╝{Colors.ENDC}
 
 {Colors.FAIL}LEGAL NOTICE:{Colors.ENDC}
@@ -652,9 +836,9 @@ Unauthorized access to computer systems is illegal.
 
 Target: {self.target}
 Output Directory: {self.session_dir}
+Verification Mode: {'ENABLED' if self.verify_mode else 'Disabled (use --verify to enable)'}
 """)
 
-        # Authorization confirmation
         auth = input(f"{Colors.WARNING}Do you have explicit written authorization to test {self.target}? (yes/no): {Colors.ENDC}").lower().strip()
         if auth not in ['yes', 'y']:
             self.log("Authorization not confirmed. Exiting.", "ERROR")
@@ -665,7 +849,6 @@ Output Directory: {self.session_dir}
 
         print(f"\n{Colors.OKGREEN}Starting assessment...{Colors.ENDC}\n")
 
-        # Run all phases
         self.run_dns_recon()
         self.run_host_discovery()
         self.analyze_headers()
@@ -673,14 +856,19 @@ Output Directory: {self.session_dir}
         self.run_advanced_web_tests()
         self.run_authentication_tests()
 
-        # Generate report
         report = self.generate_report()
 
-        # Print summary
+        if self.verify_mode:
+            self.run_verification_phase()
+            
+            if self.verification_findings_added:
+                self.log("New verification findings discovered. Regenerating final report...", "HEADER")
+                report = self.generate_report()
+
         print(f"""
 {Colors.BOLD}{Colors.HEADER}
 ╔══════════════════════════════════════════════════════════════╗
-║                    ASSESSMENT COMPLETE                       ║
+║                    ASSESSMENT COMPLETE                         ║
 ╚══════════════════════════════════════════════════════════════╝{Colors.ENDC}
 
 {Colors.OKCYAN}Results Directory:{Colors.ENDC} {self.session_dir}
@@ -714,14 +902,15 @@ written authorization from the system owner.
 def main():
     parser = argparse.ArgumentParser(
         description="SentinelVortex Authorized Web Security Assessment Framework",
-        epilog="Example: python3 web_assessor.py -t https://example.com"
+        epilog="Example: python3 web_assessor.py -t https://example.com --verify"
     )
     parser.add_argument('-t', '--target', required=True, help='Target URL (e.g., https://example.com)')
     parser.add_argument('-o', '--output', default='assessment_results', help='Output directory for results')
+    parser.add_argument('-v', '--verify', action='store_true', help='Enable interactive vulnerability verification phase (requires explicit authorization)')
 
     args = parser.parse_args()
 
-    assessor = WebSecurityAssessor(args.target, args.output)
+    assessor = WebSecurityAssessor(args.target, args.output, verify_mode=args.verify)
     assessor.run_full_assessment()
 
 
