@@ -868,7 +868,7 @@ Verification Mode: {'ENABLED' if self.verify_mode else 'Disabled (use --verify t
         print(f"""
 {Colors.BOLD}{Colors.HEADER}
 ╔══════════════════════════════════════════════════════════════╗
-║                    ASSESSMENT COMPLETE                         ║
+║                    ASSESSMENT COMPLETE                       ║
 ╚══════════════════════════════════════════════════════════════╝{Colors.ENDC}
 
 {Colors.OKCYAN}Results Directory:{Colors.ENDC} {self.session_dir}
