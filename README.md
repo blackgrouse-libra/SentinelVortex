@@ -20,5 +20,6 @@ Prerequisites - Kali tools is the easiest, but you can install all manually.
 ## 🚀 Quick Start
 
 ```bash
-python3 SentinelVortex.py https://www.insert_target_website_here.com
+python3 SentinelVortex.py -t https://www.insert_target_website_here.com
 
+python3 SentinelVortex.py -t https://www.insert_target_website_here.com --verify
